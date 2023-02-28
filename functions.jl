@@ -649,6 +649,94 @@ function make_sims(prior_mu,prior_sigma,grf_params,nr_realiz,disp)
     return new_data,new_configsu,new_params,new_realiz1_list
 end
 
+function make_sims_m(prior_mu,prior_sigma,grf_params,nr_realiz,m,disp)
+    #Set grid and create well
+    x_well = collect(20:80)
+    x = range(0,100,length=101)
+
+    #Create realizations
+    # Here we create different realisations from the prior and observe the data given the well
+    #Random.seed!(2022)
+    #Seed = 2022, 10 000 runs
+    surfs = Array{Function}(undef, m)
+    configu = []
+    roots = []
+    param_list = []
+    for i in 1:nr_realiz
+        params = zeros(m,2)
+        params = prior_sample(prior_mu,prior_sigma,m)
+        append!(param_list,[params])  
+        realiz = zeros(m,101)
+        for j in 1:m
+            realiz[j,:] = mu_func(x,params,j) .+ GaussianRandomFields.sample(grf)
+            interp = LinearInterpolation(x,realiz[j,:],extrapolation_bc=Line())
+            surf = x -> interp(x)
+            surfs[j] = surf
+        end
+        res = well_data(surfs)
+        if [res[2]] != []
+            append!(configu,[res[1]])
+            append!(roots,[res[2]])
+        end
+        if disp 
+            Plots.plot(x,zeros(length(x)),fillrange=mu_func(x,ones(3,2) .*(-Inf),1),fillcolor="gray",color="gray",label="")
+            Plots.plot!(x,mu_func(x,ones(3,2) .*(-Inf),1),fillrange=realiz[1,:],fillcolor="ivory1",color="ivory1",label="")
+            for j in 2:(m)
+                Plots.plot!(x,realiz[j-1,:], fillrange=realiz[j,:],fillcolor="ivory$j",color="ivory$j",label = "")
+            end
+            Plots.plot!(x_well,well_func.(x_well),color="grey0",label = "",linewidth=2)
+            Plots.xlims!((0,100))
+            Plots.ylims!((0,7))
+            display(Plots.plot!(title=string(Int.(res[1]))))
+            #Plots.savefig(Plots.plot!(xlabel="x",ylabel="z",title=string(Int.(res[1]))),"sim_nr_$i.png")
+        end
+    end
+    return configu,roots
+end
+
+function non_zero_configs(configu,roots)
+    #Discard no observations
+    new_roots = roots[findall(x->x!=[],roots)]
+    new_configu = configu[findall(x->x!=[0.0],configu)]
+    data = zeros(length(new_roots),length(x))
+    for i in 1:length(new_roots)
+        data[i,trunc.(Int,ceil.(new_roots[i]))] = well_func.(trunc.(Int,ceil.(new_roots[i])))
+    end
+    new_configsu = []
+    new_data = []
+    for i in 1:length(new_roots)
+        data_x = findall(x->x!=0,data[i,:])
+        data_x1 = vcat(0,data_x)
+        data_x2 = vcat(data_x,0)
+        diff = (data_x2 .- data_x1)[1:end-1]
+        config1 = vcat(0,new_configu[i][1:end-1])
+        diff2 = (new_configu[i] .- config1)[2:end]
+        check = findall(x->x==0,diff2)
+        if (sum(findall(x->x==1,diff)) == 0) && (length(check) == 0)
+            check2 = findall(x->x in [20,80],data_x)
+            if length(check2) == 0
+                append!(new_data,[data[i,:]])
+                append!(new_configsu,[new_configu[i]])
+            end
+        end
+    end 
+    #Plotting the distribution of configurations
+    configu_copy = copy(new_configu)
+    elements = unique(new_configsu)
+    non_zero_elements = elements[findall(x->x!=[0.0],elements)]
+    j=1
+    for e in non_zero_elements
+        configu_copy[findall(x->x==e,new_configsu)].=string(e)
+        j += 1
+    end
+    count_elements = zeros(length(non_zero_elements))
+    for i in 1:length(non_zero_elements)
+        count_elements[i] = countmap(configu_copy)[string.(non_zero_elements)[i]]
+    end
+    display(Plots.bar(count_elements, orientation=:h, yticks=(1:length(non_zero_elements), string.(non_zero_elements)), yflip=true))
+    return new_data,new_configsu
+end
+
 function makepaths(m, n)
     paths = [[j] for j in 1:m]
     for t in 1:n
